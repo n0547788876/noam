@@ -1,46 +1,32 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const API_KEY = process.env.INVOICE_MAVEN_API_KEY;
 const PORT = process.env.PORT || 3000;
 const IM_URL = 'https://app.invoice-maven.co.il/api/documents/addDocument';
+const BASE_URL = process.env.BASE_URL || 'https://noam-4puz.onrender.com';
 
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
-
-// MCP SSE endpoint
-app.get('/mcp', async (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-
-  // Send tool list
-  const tools = {
-    jsonrpc: '2.0',
-    method: 'notifications/tools/list_changed',
-    params: {}
-  };
-
-  // Handle MCP initialize
-  req.on('data', () => {});
-
-  res.write(`data: ${JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    result: {
-      protocolVersion: '2024-11-05',
-      capabilities: { tools: {} },
-      serverInfo: { name: 'invoice-maven', version: '1.0.0' }
-    }
-  })}\n\n`);
-
-  req.on('close', () => res.end());
+// OAuth endpoints
+app.get('/oauth/authorize', (req, res) => {
+  const { redirect_uri, state } = req.query;
+  res.redirect(`${redirect_uri}?code=invoice-maven-code&state=${state}`);
 });
 
+app.post('/oauth/token', (req, res) => {
+  res.json({
+    access_token: 'invoice-maven-token-' + crypto.randomBytes(8).toString('hex'),
+    token_type: 'bearer',
+    expires_in: 86400
+  });
+});
+
+// MCP endpoints
 app.post('/mcp', async (req, res) => {
   const { method, params, id } = req.body;
 
@@ -61,7 +47,7 @@ app.post('/mcp', async (req, res) => {
       result: {
         tools: [{
           name: 'create_document',
-          description: 'Create an invoice, quote or receipt in Invoice Maven',
+          description: 'יצירת חשבונית, הצעת מחיר או קבלה ב-Invoice Maven',
           inputSchema: {
             type: 'object',
             required: ['doc_type', 'customer_name', 'items'],
@@ -83,7 +69,7 @@ app.post('/mcp', async (req, res) => {
                 }
               },
               description: { type: 'string' },
-              send_to_customer: { type: 'number' }
+              send_to_customer: { type: 'number', description: '0=לא לשלוח, 1=לשלוח במייל' }
             }
           }
         }]
@@ -91,7 +77,7 @@ app.post('/mcp', async (req, res) => {
     });
   }
 
-  if (method === 'tools/call' && params.name === 'create_document') {
+  if (method === 'tools/call' && params?.name === 'create_document') {
     try {
       const p = params.arguments;
       const body = {
@@ -117,5 +103,7 @@ app.post('/mcp', async (req, res) => {
 
   res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
 });
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.listen(PORT, () => console.log(`Invoice Bridge פועל על פורט ${PORT}`));
